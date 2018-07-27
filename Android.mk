@@ -16,13 +16,6 @@ ifneq ($(filter x86%,$(TARGET_ARCH)),)
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := edit_mbr
-LOCAL_SRC_FILES := editdisklbl/editdisklbl.c
-LOCAL_CFLAGS := -O2 -g -W -Wall -Werror# -D_LARGEFILE64_SOURCE
-LOCAL_STATIC_LIBRARIES := libdiskconfig_host libcutils liblog
-edit_mbr := $(HOST_OUT_EXECUTABLES)/$(LOCAL_MODULE)
-include $(BUILD_HOST_EXECUTABLE)
-
 include $(CLEAR_VARS)
 LOCAL_IS_HOST_MODULE := true
 LOCAL_SRC_FILES := rpm/qemu-android
@@ -49,7 +42,6 @@ initrd_bin := \
 	$(wildcard $(initrd_dir)/*/*)
 
 systemimg  := $(PRODUCT_OUT)/system.$(if $(MKSQUASHFS),sfs,img)
-$(if $(MKSQUASHFS),$(systemimg): | $(MKSQUASHFS))
 
 TARGET_INITRD_OUT := $(PRODUCT_OUT)/initrd
 INITRD_RAMDISK := $(TARGET_INITRD_OUT).img
@@ -95,36 +87,22 @@ $(ISO_IMAGE): $(boot_dir) $(BUILT_IMG)
 	$(hide) isohybrid --uefi $@ || echo -e "isohybrid not found.\nInstall syslinux 4.0 or higher if you want to build a usb bootable iso."
 	@echo -e "\n\n$@ is built successfully.\n\n"
 
-rpm: $(wildcard $(LOCAL_PATH)/rpm/*) $(BUILT_IMG)
-	@echo ----- Making an rpm ------
-	OUT=$(abspath $(PRODUCT_OUT)); mkdir -p $$OUT/rpm/BUILD; rm -rf $$OUT/rpm/RPMS/*; $(ACP) $< $$OUT; \
-	echo $(VER) | grep -vq rc; EPOCH=$$((-$$? + `echo $(VER) | cut -d. -f1`)); \
-	rpmbuild -bb --target=$(if $(filter x86,$(TARGET_ARCH)),i686,x86_64) -D"cmdline $(BOARD_KERNEL_CMDLINE)" \
-		-D"_topdir $$OUT/rpm" -D"_sourcedir $$OUT" -D"systemimg $(notdir $(systemimg))" -D"ver $(VER)" -D"epoch $$EPOCH" \
-		$(if $(BUILD_NAME_VARIANT),-D"name $(BUILD_NAME_VARIANT)") \
-		-D"install_prefix $(if $(INSTALL_PREFIX),$(INSTALL_PREFIX),android-$(VER))" $(filter %.spec,$^); \
-	mv $$OUT/rpm/RPMS/*/*.rpm $$OUT
 
-# Note: requires dosfstools
-EFI_IMAGE := $(PRODUCT_OUT)/$(TARGET_PRODUCT).img
-ESP_LAYOUT := $(LOCAL_PATH)/editdisklbl/esp_layout.conf
-$(EFI_IMAGE): $(wildcard $(LOCAL_PATH)/boot/boot/*/*) $(BUILT_IMG) $(ESP_LAYOUT) | $(edit_mbr)
-	$(hide) sed "s|VER|$(VER)|; s|CMDLINE|$(BOARD_KERNEL_CMDLINE)|" $(<D)/grub.cfg > $(@D)/grub.cfg
-	$(hide) size=0; \
-	for s in `du -sk $^ | awk '{print $$1}'`; do \
-		size=$$(($$size+$$s)); \
-        done; \
-	size=$$(($$(($$(($$(($$(($$size + $$(($$size / 100)))) - 1)) / 32)) + 1)) * 32)); \
-	rm -f $@.fat; mkdosfs -n Android-x86 -C $@.fat $$size
-	$(hide) mcopy -Qsi $@.fat $(<D)/../../../install/grub2/efi $(BUILT_IMG) ::
-	$(hide) mmd -i $@.fat ::boot; mmd -i $@.fat ::boot/grub
-	$(hide) mcopy -Qoi $@.fat $(@D)/grub.cfg ::boot/grub
-	$(hide) cat /dev/null > $@; $(edit_mbr) -l $(ESP_LAYOUT) -i $@ esp=$@.fat
-	$(hide) rm -f $@.fat
+VERSION_FILE=$(LOCAL_PATH)/otoinit/version
+UPDATE_LIST=$(LOCAL_PATH)/otoinit/update.list
+UPDATE=primeos
+VERSION := $(shell cat $(VERSION_FILE)|awk '/PrimeOS/{print $$2;}')
 
-.PHONY: iso_img usb_img efi_img rpm
+UPDATE_IMG:= $(addprefix $(PRODUCT_OUT)/, $(shell cat $(UPDATE_LIST)))
+UPDATE_ZIP := $(PRODUCT_OUT)/$(UPDATE)_$(VERSION).zip
+$(UPDATE_ZIP): $(VERSION_FILE) $(UPDATE_LIST) $(ISO_IMAGE)
+	$(hide) rm -rf $@
+	$(hide) zip -qj $@ $(UPDATE_IMG) $(VERSION_FILE) $(UPDATE_LIST)
+
+.PHONY: iso_img usb_img efi_img update_zip
 iso_img: $(ISO_IMAGE)
 usb_img: $(ISO_IMAGE)
-efi_img: $(EFI_IMAGE)
+efi_img: $(ISO_IMAGE)
+update_zip:$(UPDATE_ZIP)
 
 endif
